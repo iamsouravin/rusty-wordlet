@@ -1,3 +1,4 @@
+use aws_config::meta::region::RegionProviderChain;
 use aws_sdk_dynamodb::model::AttributeValue;
 use aws_sdk_dynamodb::Client;
 use serde::{Deserialize, Serialize};
@@ -13,6 +14,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 mod words;
 
+const DEFAULT_AWS_REGION: &str = "ap-south-1";
 const TABLE_NAME: &str = "rusty_wordlet_games";
 const MAX_GUESSES: usize = 10;
 const WORD_LENGTH: usize = 5;
@@ -26,7 +28,8 @@ async fn main() {
         .and(warp::get())
         .map(move || warp::reply::json(&server_status));
 
-    let shared_config = aws_config::load_from_env().await;
+    let region_provider = RegionProviderChain::default_provider().or_else(DEFAULT_AWS_REGION);
+    let shared_config = aws_config::from_env().region(region_provider).load().await;
     let client = Client::new(&shared_config);
 
     let get_current_game = warp::path!("users" / String / "games" / "current")

@@ -1,27 +1,25 @@
 FROM rust:1.58.1-buster as builder
 
-ARG ARCH=x86_64-unknown-linux-gnu
-
 RUN apt-get install -y --no-install-recommends ca-certificates \
     && update-ca-certificates
 
 RUN USER=root cargo new --bin rusty_wordlet
 WORKDIR /rusty_wordlet
 COPY ./Cargo.toml ./Cargo.toml
-RUN cargo build --release --target ${ARCH}
+RUN cargo build --release
 RUN rm src/*.rs
 
 ADD . ./
 
-RUN rm ./target/${ARCH}/release/deps/rusty_wordlet*
+RUN rm ./target/release/deps/rusty_wordlet*
 
-RUN RUSTFLAGS='-C target-feature=+crt-static' cargo build --release --target ${ARCH}
+RUN cargo build --release
 
-FROM scratch
+FROM debian:buster-slim
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+    && update-ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
-ARG ARCH=x86_64-unknown-linux-gnu
+COPY --from=builder /rusty_wordlet/target/release/rusty_wordlet /usr/local/bin/rusty_wordlet
 
-COPY --from=builder /rusty_wordlet/target/${ARCH}/release/rusty_wordlet /rusty_wordlet
-COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
-
-CMD ["/rusty_wordlet"]
+CMD ["rusty_wordlet"]

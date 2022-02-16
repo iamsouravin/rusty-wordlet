@@ -2,6 +2,9 @@ FROM rust:1.58.1-buster as builder
 
 ARG ARCH=x86_64-unknown-linux-gnu
 
+RUN apt-get install -y --no-install-recommends ca-certificates \
+    && update-ca-certificates
+
 RUN USER=root cargo new --bin rusty_wordlet
 WORKDIR /rusty_wordlet
 COPY ./Cargo.toml ./Cargo.toml
@@ -19,4 +22,6 @@ FROM scratch
 ARG ARCH=x86_64-unknown-linux-gnu
 
 COPY --from=builder /rusty_wordlet/target/${ARCH}/release/rusty_wordlet /rusty_wordlet
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+
 CMD ["/rusty_wordlet"]

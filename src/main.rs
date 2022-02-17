@@ -16,7 +16,7 @@ mod words;
 
 const DEFAULT_AWS_REGION: &str = "ap-south-1";
 const TABLE_NAME: &str = "rusty_wordlet_games";
-const MAX_GUESSES: usize = 10;
+const MAX_GUESSES: usize = 5;
 const WORD_LENGTH: usize = 5;
 
 #[tokio::main]

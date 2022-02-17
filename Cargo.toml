@@ -15,3 +15,5 @@ warp = "0.3"
 thiserror = "1.0"
 validator = { version = "0.14", features = ["derive"] }
 http-api-problem = { version =  "0.51.0", features = ["hyper", "warp"] }
+strum = "0.23"
+strum_macros = "0.23"

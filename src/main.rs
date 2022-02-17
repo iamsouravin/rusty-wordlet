@@ -6,11 +6,17 @@ use validator::Validate;
 use warp::reply::Json;
 use warp::{http::StatusCode, Filter, Rejection, Reply};
 
+use std::collections::HashMap;
 use std::convert::Infallible;
+
+use std::fmt;
 
 use thiserror::Error;
 
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use std::str::FromStr;
+use strum_macros::EnumString;
 
 mod words;
 
@@ -84,13 +90,17 @@ async fn new_game_handler(
 }
 
 async fn get_current_game_handler(user_id: String, client: Client) -> Result<Json, Rejection> {
-    let game = get_current_game(user_id, &client).await;
-    Ok(warp::reply::json(&game))
+    match get_current_game(user_id, &client).await {
+        Some(game) => Ok(warp::reply::json(&game)),
+        None => Err(warp::reject::not_found()),
+    }
 }
 
 async fn guess_handler(user_id: String, guess: Guess, client: Client) -> Result<Json, Rejection> {
-    let guess_result = check_guess(user_id, guess, &client).await;
-    Ok(warp::reply::json(&guess_result))
+    match check_guess(user_id, guess, &client).await {
+        Some(guess_result) => Ok(warp::reply::json(&guess_result)),
+        None => Err(warp::reject::not_found()),
+    }
 }
 
 /**
@@ -129,14 +139,22 @@ fn choose_random_index() -> usize {
     nanos as usize % words::WORD_COUNT
 }
 
-async fn get_current_game(user_id: String, client: &Client) -> Game {
-    let user_id_av = AttributeValue::S(user_id.into());
+async fn get_current_game(user_id: String, client: &Client) -> Option<Game> {
+    let user_id_av = AttributeValue::S(user_id.clone());
     let request = client
         .get_item()
         .table_name(TABLE_NAME)
         .key("user_id", user_id_av);
-    let get_item_output = request.send().await.unwrap();
-    let item = get_item_output.item().unwrap();
+    match request.send().await {
+        Ok(get_item_output) => match get_item_output.item {
+            Some(item) => Some(process_found_item(item)),
+            None => None,
+        },
+        Err(_) => None,
+    }
+}
+
+fn process_found_item(item: HashMap<String, AttributeValue>) -> Game {
     let user_id = String::from(item.get("user_id").unwrap().as_s().unwrap());
     let word = String::from(item.get("word").unwrap().as_s().unwrap());
     let guesses = item
@@ -145,7 +163,30 @@ async fn get_current_game(user_id: String, client: &Client) -> Game {
         .as_l()
         .unwrap()
         .iter()
-        .map(|attr| String::from(attr.as_s().unwrap()))
+        .map(|guess| {
+            guess
+                .as_l()
+                .unwrap()
+                .iter()
+                .map(|attr_av| {
+                    let attr: &HashMap<String, AttributeValue> = attr_av.as_m().unwrap();
+                    let index = attr
+                        .get("index")
+                        .unwrap()
+                        .as_n()
+                        .unwrap()
+                        .parse::<usize>()
+                        .unwrap();
+                    let status =
+                        CharacterMatchStatus::from_str(attr.get("status").unwrap().as_s().unwrap())
+                            .unwrap();
+                    CharacterMatchResult {
+                        index: index,
+                        status: status,
+                    }
+                })
+                .collect()
+        })
         .collect();
     let game = Game {
         user_id: user_id,
@@ -155,17 +196,23 @@ async fn get_current_game(user_id: String, client: &Client) -> Game {
     game
 }
 
-async fn check_guess(user_id: String, guess: Guess, client: &Client) -> GuessResult {
-    let game = get_current_game(user_id.clone(), client).await;
-    if game.guesses.len() >= MAX_GUESSES {
-        return GuessResult {
-            status: GuessStatus::GameOver,
-            place_matches: Vec::new(),
-        };
-    }
-    match words::WORDS.iter().position(|&s| s == guess.guess) {
-        Some(_) => check_individual_characters(guess, game, user_id.clone(), client).await,
-        None => process_invalid_guess(guess),
+async fn check_guess(user_id: String, guess: Guess, client: &Client) -> Option<GuessResult> {
+    match get_current_game(user_id.clone(), client).await {
+        Some(game) => {
+            if game.guesses.len() >= MAX_GUESSES {
+                return Some(GuessResult {
+                    status: GuessStatus::GameOver,
+                    place_matches: Vec::new(),
+                });
+            }
+            match words::WORDS.iter().position(|&s| s == guess.guess) {
+                Some(_) => {
+                    Some(check_individual_characters(guess, game, user_id.clone(), client).await)
+                }
+                None => Some(process_invalid_guess(guess)),
+            }
+        }
+        None => None,
     }
 }
 
@@ -205,8 +252,24 @@ async fn check_individual_characters(
         }
     }
     let user_id_av = AttributeValue::S(user_id.into());
-    let mut new_guess = Vec::new();
-    new_guess.push(AttributeValue::S(guess.guess.clone()));
+
+    let char_match_results_av: Vec<AttributeValue> = char_match_results
+        .iter()
+        .map(|match_result| {
+            let mut attr_map: HashMap<String, AttributeValue> = HashMap::new();
+            attr_map.insert(
+                String::from("index"),
+                AttributeValue::N(match_result.index.to_string()),
+            );
+            attr_map.insert(
+                String::from("status"),
+                AttributeValue::S(match_result.status.to_string()),
+            );
+            AttributeValue::M(attr_map)
+        })
+        .collect();
+    let mut new_guess: Vec<AttributeValue> = Vec::new();
+    new_guess.push(AttributeValue::L(char_match_results_av));
     let new_guess_av = AttributeValue::L(new_guess);
     let request = client
         .update_item()
@@ -255,7 +318,7 @@ struct NewGameRequest {}
 struct Game {
     pub user_id: String,
     pub word: String,
-    pub guesses: Vec<String>,
+    pub guesses: Vec<Vec<CharacterMatchResult>>,
 }
 
 #[derive(Deserialize, Debug, Serialize, Validate)]
@@ -284,12 +347,23 @@ struct CharacterMatchResult {
     pub status: CharacterMatchStatus,
 }
 
-#[derive(Deserialize, Debug, Serialize)]
+#[derive(Deserialize, Debug, Serialize, EnumString)]
 enum CharacterMatchStatus {
     PresentAtCorrectPlace,
     PresentAtIncorrectPlace,
     NotPresent,
     Invalid,
+}
+
+impl fmt::Display for CharacterMatchStatus {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            CharacterMatchStatus::PresentAtCorrectPlace => write!(f, "PresentAtCorrectPlace"),
+            CharacterMatchStatus::PresentAtIncorrectPlace => write!(f, "PresentAtIncorrectPlace"),
+            CharacterMatchStatus::NotPresent => write!(f, "NotPresent"),
+            CharacterMatchStatus::Invalid => write!(f, "Invalid"),
+        }
+    }
 }
 
 /**

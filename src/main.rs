@@ -177,11 +177,13 @@ fn process_found_item(item: HashMap<String, AttributeValue>) -> Game {
                         .unwrap()
                         .parse::<usize>()
                         .unwrap();
+                    let letter = String::from(attr.get("letter").unwrap().as_s().unwrap());
                     let status =
                         CharacterMatchStatus::from_str(attr.get("status").unwrap().as_s().unwrap())
                             .unwrap();
                     CharacterMatchResult {
                         index: index,
+                        letter: letter,
                         status: status,
                     }
                 })
@@ -230,6 +232,7 @@ async fn check_individual_characters(
         if *guess_word_char == game_word_chars[i] {
             char_match_results.push(CharacterMatchResult {
                 index: i,
+                letter: guess_word_char.to_string(),
                 status: CharacterMatchStatus::PresentAtCorrectPlace,
             });
             exact_matches_count += 1;
@@ -238,6 +241,7 @@ async fn check_individual_characters(
                 if i != j && *guess_word_char == *game_word_char {
                     char_match_results.push(CharacterMatchResult {
                         index: i,
+                        letter: guess_word_char.to_string(),
                         status: CharacterMatchStatus::PresentAtIncorrectPlace,
                     });
                     break;
@@ -246,6 +250,7 @@ async fn check_individual_characters(
             if char_match_results.len() < i + 1 {
                 char_match_results.push(CharacterMatchResult {
                     index: i,
+                    letter: guess_word_char.to_string(),
                     status: CharacterMatchStatus::NotPresent,
                 });
             }
@@ -260,6 +265,10 @@ async fn check_individual_characters(
             attr_map.insert(
                 String::from("index"),
                 AttributeValue::N(match_result.index.to_string()),
+            );
+            attr_map.insert(
+                String::from("letter"),
+                AttributeValue::S(guess_word_chars[match_result.index].to_string()),
             );
             attr_map.insert(
                 String::from("status"),
@@ -294,10 +303,12 @@ async fn check_individual_characters(
 
 fn process_invalid_guess(guess: Guess) -> GuessResult {
     let length = guess.guess.len();
+    let guess_word_chars: Vec<char> = guess.guess.chars().collect();
     let mut char_match_results: Vec<CharacterMatchResult> = Vec::new();
     for i in 0..length {
         char_match_results.push(CharacterMatchResult {
             index: i,
+            letter: guess_word_chars[i].to_string(),
             status: CharacterMatchStatus::Invalid,
         });
     }
@@ -344,6 +355,7 @@ enum GuessStatus {
 #[derive(Deserialize, Debug, Serialize)]
 struct CharacterMatchResult {
     pub index: usize,
+    pub letter: String,
     pub status: CharacterMatchStatus,
 }
 
